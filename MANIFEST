@@ -1,0 +1,11 @@
+lib/WWW/Shopify/Tools/Themer.pm
+assets/refresh.png
+assets/shopifyeditor.plugin
+assets/push.png
+assets/shopifyeditor.py
+assets/pull.png
+shopify-themer.pl
+MANIFEST
+Build.PL
+META.yml
+META.json
