@@ -6,14 +6,10 @@ use warnings;
 use WWW::Shopify;
 use WWW::Shopify::Private;
 
-package WWW::Shopify::Tools::Themer::DateTime;
-use parent 'DateTime';
-
 package WWW::Shopify::Tools::Themer::Manifest;
 use JSON;
 use File::Slurp::Unicode;
 use File::stat;
-use Data::Dumper;
 
 sub new { return bless { }, $_[0]; }
 sub load { 
@@ -44,15 +40,18 @@ sub exists { return (exists $_[0]->{files}->{$_[1]}); }
 sub local { $_[0]->{files}->{$_[1]}->{'local'} = $_[2] if int(@_) == 3; return $_[0]->{files}->{$_[1]}->{'local'}; }
 sub remote { $_[0]->{files}->{$_[1]}->{'remote'} = $_[2] if int(@_) == 3; return $_[0]->{files}->{$_[1]}->{'remote'}; }
 sub system { $_[0]->{files}->{$_[1]}->{'system'} = $_[2] if int(@_) == 3; return $_[0]->{files}->{$_[1]}->{'system'}; }
+sub files { return keys(%{$_[0]->{files}}); }
 
 sub has_local_changes($$) { 
 	my ($self, $path) = @_;
-	return 0 if !$self->exists($path) || !(-e $path) || !$self->local($path);
+	#return 0 if !$self->exists($path) || !(-e $path) || !$self->local($path);
+	return 1 if !$self->exists($path) || !(-e $path) || !$self->local($path);
 	return ($self->system($path) < DateTime->from_epoch(epoch => stat($path)->mtime));
 }
 sub has_remote_changes($$) {
 	my ($self, $path) = @_;
-	return 1 if !$self->exists($path) || !(-e $path) || !$self->local($path);
+	return undef unless $self->remote($path);
+	return 1 if !(-e $path) || !$self->local($path);
 	return ($self->local($path) < $self->remote($path));
 }
 
@@ -68,7 +67,7 @@ use MIME::Base64;
 use threads;
 use threads::shared;
 
-our $VERSION = '0.01';
+our $VERSION = '0.02';
 
 =head1 WWW::Shopify::Tools::Themer
 
@@ -96,6 +95,8 @@ sub manifest() { return $_[0]->{_manifest}; }
 sub sa() { return $_[0]->{_SA}; }
 
 =head1 get_themes
+
+get_themes returns an array of all the themes present in the shop, with the active theme first.s
 
 =cut
 
@@ -125,11 +126,15 @@ sub pull_all {
 Pulls all assets from a particular theme and then dumps them into the working folder, in a directory named for the particular theme.
 
 	my @themes = $sa->get_all('ShopifyAPI::Model::Theme');
-	$STC->pull($Themes[2]);
+	$STC->pull($themes[2]);
+
+Files that are locally and remotely changed will be overwritten locally, so keep an eye out for this.
+Files that are locally not, and remotely chagned will be overritten locally.
+Files that are not present locally and remotely present will be pulled.
 
 =cut
 
-sub pull($$$) {
+sub pull {
 	# Get all assets.
 	my ($self, $theme, $folder) = @_;
 	$folder = "." unless defined $folder;
@@ -139,6 +144,15 @@ sub pull($$$) {
 	my @assets = $self->sa()->get_all('Asset', {parent => $theme->{id}});
 	# We do a threaded pull, because we can.
 	my @asset_ids:shared = (0 .. int(@assets)-1);
+
+	my %present = map { "$n/" . $_->key => 1 } @assets;
+	my @files = $self->manifest->files;
+	# Check to see if the file is deleted on the server side. If so, then delete it on our side.
+	for (grep { !exists $present{$_} } @files) {
+		delete $self->manifest->{files}->{$_};
+		unlink($_);
+	}
+
 	for (my $c = 0; $c < $self->threads(); ++$c) {
 		#threads->create(sub {
 			while (int(@asset_ids) > 0) {
@@ -173,7 +187,7 @@ Pushes all assets from all themes, if they need to be pushed.
 
 =cut
 
-sub pushAll {
+sub push_all {
 	my ($self, $folder) = @_;
 	$self->push($_, $folder) for (@{$self->manifest->{themes}});
 }
@@ -185,23 +199,33 @@ Pushes all assets from a particular theme that need to be pushed.
 
 	$STC->push($theme);
 
+Files that are locally changed, and remotely not, will be pushed.
+Files that are locally changed, and remotely changed, will not be pushed.
+Files that are locally unchanged will only be pushed if the file is missing on the server.
+
 =cut
 
-sub push($$$) {
+sub push {
 	my ($self, $theme, $folder) = @_;
 	$folder = "." unless defined $folder;
 	my $manifest = $self->manifest();
 	my $n = "$folder/" . $theme->{name};
-	
-	my @assets = ();
+
+	my @assets = $self->sa()->get_all('Asset', {parent => $theme->{id}});
+	$manifest->remote("$n/" . $_->key(), $_->updated_at) for (@assets);
+
+	my %present = map { "$n/" . $_->key() => 1 } @assets;
+
+	@assets = ();
 	find({no_chdir => 1, wanted => sub { 
 		my ($path, $name) = ($_, basename($_));
 		return if ($name =~ m/^\./);
 		return if (-d $path);
 		return if !$manifest->has_local_changes($path);
-		die "Unable to push to repo; there are remote changes on $path.\n" if $manifest->has_remote_changes($path);
+		die new WWW::Shopify::Exception("Unable to push to repo; there are remote changes on $path.") if $manifest->has_remote_changes($path);
 		push(@assets, $path);
 	}}, $n);
+
 	my @asset_ids:shared = (0 .. int(@assets)-1);
 	for (my $c = 0; $c < $self->threads(); ++$c) {
 		#threads->create(sub {
@@ -212,12 +236,17 @@ sub push($$$) {
 				die $path unless $path =~ m/$n\/(.*?\.(\w+))$/;
 				my $asset_key = $1;
 				my $asset_extension = $2;
-				# If we have a liquid template.
 				my $asset = new WWW::Shopify::Model::Asset({key => $asset_key, container_id => $theme->{id}});
 				$asset->value(scalar(read_file($path))) if ($asset_extension eq "liquid" || $asset_extension eq "json" || $asset_extension eq "js");
 				$asset->attachment(encode_base64(scalar(read_file($path, encoding => "binary")))) if ($asset_extension =~ m/^(jpg|png|gif)$/);
 				$self->log("[" . sprintf("%3.2f", (1.0 - int(@asset_ids)/int(@assets))*100.0) . "%] Pushing $path...\n");
-				$asset = $self->sa()->update($asset);
+				if ($manifest->exists($_)) {
+					$asset = $self->sa->update($asset);
+				}
+				else {
+					$asset->{parent} = $theme->{id};
+					$asset = $self->sa->create($asset);
+				}
 				$manifest->system($path, DateTime->from_epoch(epoch => stat($path)->mtime));
 				$manifest->local($path, $asset->updated_at);
 				$manifest->remote($path, $asset->updated_at);

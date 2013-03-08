@@ -26,7 +26,7 @@ shopify-themer.pl action [options]
 		
 			info
 			Spits out a bunch of theme information in JSON form.
-			Mainly used for debugging.
+			Mainly used for debugging, and gedit integration.
 
 			pullAll
 			Pulls all themes from the shop
@@ -48,8 +48,51 @@ shopify-themer.pl action [options]
 	--help		Displays this messaqge.
 	--fullhelp	Displays the full pod doc.
 
+	--wd		Sets the working directory to be something other
+			than .
+
+	This following three parameters only need to be speciefied once
+	per working directory, as it will be saved in a hidden file in
+	that directory.
+
+	--url		Sets the shop url.
+	--api_key	Sets the api key of your private application.
+	--password	Sets the password of your prviate application.
+
 =cut
 
+=head1 DESCRIPTION
+
+Shopify themer is a simple script which uses WWW::Shopify::Private to 
+fetch themes and assets from a Shopify store. It is meant to be used
+as either a standalone application, or integrated with Gedit as a plugin.
+
+The gedit plugin is written in python, but ultimately is simply a wrapper
+around this script. Currently, support is limited to those OSs which look
+like Linux (i.e., have a home folder, with the gedit plugins located at
+~/.local/share/gedit/plugins, and which can make symlinnks (not Windows XP)).
+
+Windows support will be possible in newer versions.
+
+Normally, you only have to specify the shop url, api key and password
+once per working directory/site. Don't try and create multiple site themes
+in the same directory as this is a _BAD_ _IDEA_. 
+
+The Shopify shop is the ultimate arbitrator of what is the 'final' version
+of a file; this makes good sense when multiple people are working on a shop,
+but may be somewhat annoying. What this means, is that:
+
+For pushing:
+Files that are locally changed, and remotely not, will be pushed.
+Files that are locally changed, and remotely changed, will not be pushed.
+Files that are locally unchanged will only be pushed if the file is missing on the server.
+
+For pulling:
+Files that are locally and remotely changed will be overwritten locally, so keep an eye out for this.
+Files that are locally not, and remotely chagned will be overritten locally.
+Files that are not present locally and remotely present will be pulled.
+
+=cut
 
 use WWW::Shopify::Tools::Themer;
 
@@ -65,7 +108,6 @@ GetOptions(
 	"wd=s" => \$settings->{working},
 	"help" => \my $help,
 	"fullhelp" => \my $fullhelp,
-	'verbose' => \my $verbose,
 	'<>' => sub { push(@ARGS, $_[0]->name); }
 );
 pod2usage() if ($help);
