@@ -110,10 +110,11 @@ GetOptions(
 	"fullhelp" => \my $fullhelp,
 	'<>' => sub { push(@ARGS, $_[0]->name); }
 );
-pod2usage() if ($help);
-pod2usage(-verbose => 2) if ($fullhelp);
 
 my $action = $ARGS[0];
+
+pod2usage(-verbose => 2) if ($fullhelp);
+pod2usage() if ($help || !defined $action);
 
 if ($action eq 'installGedit') {
 	die "Must have HOME environment variable defined; I'm guessing you're using this on windows? Sorry, automatic gedit installation isn't supported.\n" unless $ENV{'HOME'};
@@ -125,27 +126,40 @@ if ($action eq 'installGedit') {
 	print "Checking to see if python exists... ";
 	`python --version`;
 	die "Can't detect python.\n" unless $? == 0;
-	my $plugin_directory = $ENV{'HOME'} . "/.local/share/gedit/plugins";
-	my $old_dir = "$plugin_directory/shopifyeditor";
-	if (!-e $old_dir) {
-		print "Checking for presence of gedit settings directory in $plugin_directory... ";
-		if (!-d $plugin_directory) {
+	my $share_directory = $ENV{'HOME'} . "/.local/share";
+	my $plugin_directory = "$share_directory/gedit/plugins";
+	my $dist_directory = dist_dir('WWW-Shopify-Tools-Themer');
+
+	sub prompt_directory {
+		my ($directory) = @_;
+		if (!-d $directory) {
 			print "No.\n";
 			my $result = &prompt("y", "Would you like to create it?", undef, "y");
 			if (!$result) {
 				print "Aborting install.\n";
 				exit(0);
 			}
-			make_path($plugin_directory);
+			make_path($directory);
 		}
 		else {
 			print "Yes.\n";
 		}
+	}
+
+	my $target_directory = "$plugin_directory/shopifyeditor";
+	if (!-e $target_directory) {
+		print "Checking for presence of gedit settings directory in $plugin_directory... ";
+		prompt_directory($plugin_directory);
 		print "Symlinking sharedir to directory... ";
-		my $share_dir = dist_dir('WWW-Shopify-Tools-Themer');
-		if (!-e $old_dir) {
-			die "Can't symlink, for some reason.\n" unless symlink($share_dir, $old_dir) == 1;
-		}
+		die "Can't symlink, for some reason.\n" if symlink($dist_directory, $target_directory) != 1;
+		print "Yes.\n";
+	}
+	my $language_directory = "$share_directory/gtksourceview-3.0";
+	if (!-e "$language_directory/language-specs") {
+		print "Checking for presence of source view languages in $language_directory... ";
+		prompt_directory($language_directory);
+		print "Symlinking language dir to directory... ";
+		die "Can't symlink for some reason.\n" if symlink("$dist_directory/languages", "$language_directory/language-specs") != 1;
 		print "Yes.\n";
 	}
 	print "Done.\n";
@@ -159,7 +173,6 @@ die "Please specify a --url, --apikey and --password when using for the first ti
 
 write_file($settingFile, encode_json($settings));
 
-die "Please specify an action.\n" unless defined $action;
 
 my $STC = new WWW::Shopify::Tools::Themer($settings);
 $STC->manifest()->load($manifestFile) if -e $manifestFile;
@@ -226,3 +239,25 @@ if ($@) {
 $STC->manifest->save($manifestFile);
 
 exit 0;
+
+
+=head1 SEE ALSO
+
+L<WWW::Shopify>, L<WWW::Shopify::Private>
+
+=head1 AUTHOR
+
+Adam Harrison (adamdharrison@gmail.com)
+
+=head1 LICENSE
+
+Copyright (C) 2013 Adam Harrison
+
+Permission is hereby granted, free of charge, to any person obtaining a copy of this software and associated documentation files (the "Software"), to deal in the Software without restriction, including without limitation the rights to use, copy, modify, merge, publish, distribute, sublicense, and/or sell copies of the Software, and to permit persons to whom the Software is furnished to do so, subject to the following conditions:
+
+The above copyright notice and this permission notice shall be included in all copies or substantial portions of the Software.
+
+THE SOFTWARE IS PROVIDED "AS IS", WITHOUT WARRANTY OF ANY KIND, EXPRESS OR IMPLIED, INCLUDING BUT NOT LIMITED TO THE WARRANTIES OF MERCHANTABILITY, FITNESS FOR A PARTICULAR PURPOSE AND NONINFRINGEMENT. IN NO EVENT SHALL THE AUTHORS OR COPYRIGHT HOLDERS BE LIABLE FOR ANY CLAIM, DAMAGES OR OTHER LIABILITY, WHETHER IN AN ACTION OF CONTRACT, TORT OR OTHERWISE, ARISING FROM, OUT OF OR IN CONNECTION WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE SOFTWARE.
+
+=cut
+

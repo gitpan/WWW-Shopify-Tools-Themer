@@ -1,9 +1,10 @@
 lib/WWW/Shopify/Tools/Themer.pm
-assets/refresh.png
+assets/pull.png
+assets/languages/liquid.lang
 assets/shopifyeditor.plugin
 assets/push.png
 assets/shopifyeditor.py
-assets/pull.png
+assets/refresh.png
 shopify-themer.pl
 MANIFEST
 Build.PL
