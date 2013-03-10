@@ -102,6 +102,7 @@ class ShopifyEditorPlugin(GObject.Object, Gedit.WindowActivatable):
 			directory = file_chooser.get_filename()
 			file_chooser.destroy()
 			dialog = Gtk.Dialog("Create Project", self.window)
+			dialog.set_size_request(500, -1)
 			dialog.add_buttons(Gtk.STOCK_ADD, Gtk.ResponseType.OK, Gtk.STOCK_CLOSE, Gtk.ResponseType.CANCEL)
 			box = dialog.get_content_area()
 
@@ -118,7 +119,13 @@ class ShopifyEditorPlugin(GObject.Object, Gedit.WindowActivatable):
 			table.attach(shop_name_entry, 1, 2, 0, 1)
 			table.attach(Gtk.Label("Site URL"), 0, 1, 1, 2)
 			table.attach(shop_url_entry, 1, 2, 1, 2)
-			table.attach(Gtk.Label("API Key"), 0, 1, 2, 3)
+
+			combo_box = Gtk.ComboBoxText()
+			combo_box.append_text("API Key")
+			combo_box.append_text("Email")
+			combo_box.set_active(0)
+
+			table.attach(combo_box, 0, 1, 2, 3)
 			table.attach(shop_api_key_entry, 1, 2, 2, 3)
 			table.attach(Gtk.Label("Password"), 0, 1, 3, 4)
 			table.attach(shop_password_entry, 1, 2, 3, 4)
@@ -129,8 +136,10 @@ class ShopifyEditorPlugin(GObject.Object, Gedit.WindowActivatable):
 
 			if response == Gtk.ResponseType.OK:
 				project = ShopifyProject(self)
-				project.enable_settings(shop_name_entry.get_text(), shop_url_entry.get_text(), 
-					shop_api_key_entry.get_text(), shop_password_entry.get_text(), directory)
+				if combo_box.get_active() == 0:
+					project.enable_settings(shop_name_entry.get_text(), shop_url_entry.get_text(), shop_api_key_entry.get_text(), None, shop_password_entry.get_text(), directory)
+				else:
+					project.enable_settings(shop_name_entry.get_text(), shop_url_entry.get_text(), None, shop_api_key_entry.get_text(), shop_password_entry.get_text(), directory)
 				self.register_project(project)
 			dialog.destroy()
 		elif response == Gtk.ResponseType.CANCEL:
@@ -175,6 +184,18 @@ class ShopifyProject():
 		self.plugin.unregister_project(self)
 		self.remove_menu()
 
+	# Runs the actual script.
+	def themer_arguments(self, action, argument = None):
+		# Seriously Pyhton? It's possible I'm not doing it right, but damn, that array manipulation is cumbersome.
+		arguments = ['shopify-themer.pl', '--wd=' + os.path.abspath(self.settings['directory']), '--password=' + self.settings['password'], '--url=' + self.settings['url'], action]
+		if argument != None:
+			arguments.append(argument)
+		if self.settings['email'] != None:
+			arguments.append('--email=' + self.settings['email'])
+		else:
+			arguments.append('--api_key=' + self.settings['api_key'])
+		return arguments
+
 	# Enable the project by loading a settings file in the specified directory.
 	def enable_file(self, directory):
 		settings = {}
@@ -183,12 +204,12 @@ class ShopifyProject():
 				settings = json.loads(f.read())
 		except IOError as e:
 			print 'Unable to open file: ' + directory + '/' + '.shopifygedit'
-		self.enable_settings(settings['name'], settings['url'], settings['api_key'], settings['password'], directory)
+		self.enable_settings(settings['name'], settings['url'], settings['api_key'], settings['email'], settings['password'], directory)
 	
 	# Enables the project through arguments.
-	def enable_settings(self, name, url, api_key, password, directory):
+	def enable_settings(self, name, url, api_key, email, password, directory):
 		self.remove_menu()
-		self.settings = {'name': name, 'url': url, 'api_key': api_key, 'password': password, 'directory': directory}
+		self.settings = {'name': name, 'url': url, 'email': email, 'api_key': api_key, 'password': password, 'directory': directory}
 		try:
 			with open(directory + '/' + '.shopifygedit', 'w') as f:
 				f.write(json.dumps(self.settings))
@@ -200,9 +221,15 @@ class ShopifyProject():
 		#self.theme_selector.clear_items()
 		self.theme_selector.append_text("<< ALL >>")
 		self.theme_selector.set_active(0)
-		themes = eval(subprocess.check_output(['shopify-themer.pl', 'info', '--wd=' + os.path.abspath(self.settings['directory']), '--api_key=' + self.settings['api_key'], '--password=' + self.settings['password'], '--url=' + self.settings['url']]));
-		for i in themes:
-			self.theme_selector.append_text(i['name'])
+		try:
+			theme_json = subprocess.check_output(self.themer_arguments('info'))
+			themes = eval(re.sub(r'^Done.$', r'', theme_json, flags=re.MULTILINE))
+			for i in themes:
+				self.theme_selector.append_text(i['name'])
+		except subprocess.CalledProcessError as e:
+			md = Gtk.MessageDialog(self.plugin.window, 0, Gtk.MessageType.ERROR, Gtk.ButtonsType.CLOSE, "There was an error. Make sure you have the right credentials. Check your terminal for more detailed output. " + e.output)
+			md.run()
+			md.destroy()
 
 	def insert_menu(self):
 		self.fullbox = Gtk.HBox()
@@ -288,9 +315,9 @@ class ShopifyProject():
 		if self.theme_selector.get_active_text() == None:
 			raise Exception("Should never be None for theme selector active.")
 		if self.theme_selector.get_active_text() == "<< ALL >>":
-			argument_array = ['shopify-themer.pl', 'pushAll', '--wd=' + os.path.abspath(self.settings['directory']), '--api_key=' + self.settings['api_key'], '--password=' + self.settings['password'], '--url=' + self.settings['url']]
+			argument_array = self.themer_arguments('pushAll')
 		else:
-			argument_array = ['shopify-themer.pl', 'push', self.theme_selector.get_active_text(), '--wd=' + os.path.abspath(self.settings['directory']), '--api_key=' + self.settings['api_key'], '--password=' + self.settings['password'], '--url=' + self.settings['url']]
+			argument_array = self.themer_arguments('push', self.theme_selector.get_active_text())
 		wt = PushThread(self.work, argument_array)
 		wt.start()
 
@@ -300,9 +327,9 @@ class ShopifyProject():
 		if self.theme_selector.get_active_text() == None:
 			raise Exception("Should never be None for theme selector active.")
 		if self.theme_selector.get_active_text() == "<< ALL >>":
-			argument_array = ['shopify-themer.pl', 'pullAll', '--wd=' + os.path.abspath(self.settings['directory']), '--api_key=' + self.settings['api_key'], '--password=' + self.settings['password'], '--url=' + self.settings['url']]
+			argument_array = self.themer_arguments('pullAll')
 		else:
-			argument_array = ['shopify-themer.pl', 'pull', self.theme_selector.get_active_text(), '--wd=' + os.path.abspath(self.settings['directory']), '--api_key=' + self.settings['api_key'], '--password=' + self.settings['password'], '--url=' + self.settings['url']]
+			argument_array = self.themer_arguments('pull', self.theme_selector.get_active_text())
 		wt = PullThread(self.work, argument_array)
 		wt.start()
 

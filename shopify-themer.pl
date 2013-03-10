@@ -44,6 +44,13 @@ shopify-themer.pl action [options]
 			Checks for gedit on the system and then
 			installs the appropriate plugin into
 			the gedit configuration folder.
+
+			interactive
+			Causes the script to be interactive; useful if
+			you want to do something non-transactional,
+			like continuous interaction with gedit. Will
+			drop to a command line, and await the above
+			actions. To exit, type exit.
 	
 	--help		Displays this messaqge.
 	--fullhelp	Displays the full pod doc.
@@ -57,7 +64,10 @@ shopify-themer.pl action [options]
 
 	--url		Sets the shop url.
 	--api_key	Sets the api key of your private application.
-	--password	Sets the password of your prviate application.
+	--email		Sets the email you want to log in with.
+	--password	Either your private application's password when
+			used with api_key, or your account's password
+			when used with email.
 
 =cut
 
@@ -68,11 +78,10 @@ fetch themes and assets from a Shopify store. It is meant to be used
 as either a standalone application, or integrated with Gedit as a plugin.
 
 The gedit plugin is written in python, but ultimately is simply a wrapper
-around this script. Currently, support is limited to those OSs which look
-like Linux (i.e., have a home folder, with the gedit plugins located at
-~/.local/share/gedit/plugins, and which can make symlinnks (not Windows XP)).
-
-Windows support will be possible in newer versions.
+around this script. Currently, support is limited to those OSs which can
+make symlinks and can install gedit. This means that it should also work
+(experimentally) on Windows and Mac. The system is mainly tested on Linux,
+so support for Linux is definitely higher priority than for other systmes.
 
 Normally, you only have to specify the shop url, api key and password
 once per working directory/site. Don't try and create multiple site themes
@@ -105,6 +114,7 @@ GetOptions(
 	"url=s" => \$settings->{url},
 	"api_key=s" => \$settings->{apikey},
 	"password=s" => \$settings->{password},
+	"email=s" => \$settings->{email},
 	"wd=s" => \$settings->{working},
 	"help" => \my $help,
 	"fullhelp" => \my $fullhelp,
@@ -117,22 +127,13 @@ pod2usage(-verbose => 2) if ($fullhelp);
 pod2usage() if ($help || !defined $action);
 
 if ($action eq 'installGedit') {
-	die "Must have HOME environment variable defined; I'm guessing you're using this on windows? Sorry, automatic gedit installation isn't supported.\n" unless $ENV{'HOME'};
-	die "You system doesn't support symlinks. Which is crazy. Not supported, aborting install.\n" unless eval { symlink("", ""); 1; };
-	print "Checking to see if gedit exists... ";
-	`gedit --version`;
-	die "Can't detect gedit.\n" unless $? == 0;
-	print "Yes.\n";
-	print "Checking to see if python exists... ";
-	`python --version`;
-	die "Can't detect python.\n" unless $? == 0;
-	my $share_directory = $ENV{'HOME'} . "/.local/share";
-	my $plugin_directory = "$share_directory/gedit/plugins";
-	my $dist_directory = dist_dir('WWW-Shopify-Tools-Themer');
+	die "You system doesn't support symlinks. Which is crazy. Still on XP, eh? (probably) Not supported, aborting install.\n" unless eval { symlink("", ""); 1; };
 
 	sub prompt_directory {
 		my ($directory) = @_;
 		if (!-d $directory) {
+			# We shoudln't need to create any folders in Windows; they should all be there.
+			die "Can't find $directory, aborting install.\n" if ($^O =~ m/MSWin/i);
 			print "No.\n";
 			my $result = &prompt("y", "Would you like to create it?", undef, "y");
 			if (!$result) {
@@ -146,7 +147,39 @@ if ($action eq 'installGedit') {
 		}
 	}
 
-	my $target_directory = "$plugin_directory/shopifyeditor";
+	my $dist_directory = dist_dir('WWW-Shopify-Tools-Themer');
+	my ($plugin_directory, $target_directory, $language_directory);
+	if ($^O !~ m/MSWin/i) {
+		# *NIX Derivatives install, probably.
+		die "Must have HOME environment variable defined; Sorry, automatic gedit installation isn't supported without this.\n" unless $ENV{'HOME'};
+		print "Checking to see if gedit exists... ";
+		`gedit --version`;
+		die "Can't detect gedit.\n" unless $? == 0;
+		print "Yes.\n";
+		print "Checking to see if python exists... ";
+		`python --version`;
+		die "Can't detect python.\n" unless $? == 0;
+		my $share_directory = $ENV{'HOME'} . "/.local/share";
+		$plugin_directory = "$share_directory/gedit/plugins";
+		$target_directory = "$plugin_directory/shopifyeditor";
+		$language_directory = "$share_directory/gtksourceview-3.0";
+	}
+	else {
+		die "Can't find program files environment variable." unless $ENV{'PROGRAMFILES'};
+		my $share_directory = $ENV{'PROGRAMFILES'} . "/gedit";
+		if (!(-d $share_directory) && $ENV{'PROGRAMFILES(X86)'}) {
+			$share_directory = $ENV{'PROGRAMFILES(X86)'} . "/gedit";
+		}
+		if (!-d $share_directory) {
+			print "Can't find gedit directory in Program Files; enter it here: " unless -d $share_directory;
+			$share_directory = <STDIN>;
+		}
+		die "Directory doesn't exist." unless -d $share_directory;
+		$share_directory = "$share_directory/share";
+		$plugin_directory = "$share_directory/plugins";
+		$target_directory = "$plugin_directory/shopifyeditor";
+		$language_directory = "$share_directory/gtksourceview-2.0";
+	}
 	if (!-e $target_directory) {
 		print "Checking for presence of gedit settings directory in $plugin_directory... ";
 		prompt_directory($plugin_directory);
@@ -154,7 +187,6 @@ if ($action eq 'installGedit') {
 		die "Can't symlink, for some reason.\n" if symlink($dist_directory, $target_directory) != 1;
 		print "Yes.\n";
 	}
-	my $language_directory = "$share_directory/gtksourceview-3.0";
 	if (!-e "$language_directory/language-specs") {
 		print "Checking for presence of source view languages in $language_directory... ";
 		prompt_directory($language_directory);
@@ -169,7 +201,7 @@ if ($action eq 'installGedit') {
 my ($settingFile, $manifestFile) = ($settings->{working} . "/.shopsettings", $settings->{working} . "/.shopmanifest");
 my $filesettings = decode_json(read_file($settingFile)) if (-e $settingFile);
 for (keys(%$filesettings)) { $settings->{$_} = $filesettings->{$_} unless defined $settings->{$_}; }
-die "Please specify a --url, --apikey and --password when using for the first time.\n" unless defined $settings->{url} && defined $settings->{password} && defined $settings->{apikey};
+die "Please specify a --url, --apikey xor --email and --password when using for the first time.\n" unless defined $settings->{url} && defined $settings->{password} && (defined $settings->{apikey} xor defined $settings->{email});
 
 write_file($settingFile, encode_json($settings));
 
@@ -178,10 +210,12 @@ my $STC = new WWW::Shopify::Tools::Themer($settings);
 $STC->manifest()->load($manifestFile) if -e $manifestFile;
 
 use List::Util qw(first);
+my $interactive = $action eq "interactive";
+
 my %actions = (
 	'info' => sub {
 		my @themes = $STC->get_themes;
-		print encode_json(int(@themes) > 0 ? \@themes : []);
+		print encode_json(int(@themes) > 0 ? \@themes : []) . "\n";
 	},
 	'pullAll' => sub {
 		$STC->pull_all($settings->{working});
@@ -212,29 +246,42 @@ my %actions = (
 		}
 		die "Unable to find theme " . $ARGS[1] . "\n" unless $theme;
 		$STC->pull($theme, $settings->{working});
-	}
+	},
+	'exit' => sub { $interactive = undef; }
 );
 
-die "Unknown action: $action.\n" unless exists ($actions{$action});
-eval {
-	$actions{$action}();
-};
-if ($@) {
-	use Data::Dumper;
-	print STDERR Dumper($@);
-	if (ref($@->error) eq "HTTP::Response") {
-		if ($@->error->code == 500) {
-			print $@->error->content;
-		}
-		else {
-			my $json = decode_json($@->error->content);
-			print $json->{errors}->{asset}->[0];
+
+do {
+	if ($interactive) {
+		$action = <STDIN>;
+		chomp $action;
+	}
+	if (exists ($actions{$action})) {
+		eval {
+			$actions{$action}();
+			print "Done.\n";
+		};
+		if ($@) {
+			use Data::Dumper;
+			print STDERR Dumper($@);
+			if (ref($@->error) eq "HTTP::Response") {
+				if ($@->error->code == 500) {
+					print $@->error->content;
+				}
+				else {
+					my $json = decode_json($@->error->content);
+					print $json->{errors}->{asset}->[0];
+				}
+			}
+			else {
+				print $@->error
+			}
 		}
 	}
 	else {
-		print $@->error
+		print STDERR "Unknown action: $action.\n";
 	}
-}
+} while ($interactive);
 
 $STC->manifest->save($manifestFile);
 

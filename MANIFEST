@@ -1,6 +1,7 @@
 lib/WWW/Shopify/Tools/Themer.pm
 assets/pull.png
 assets/languages/liquid.lang
+assets/languages/liquid-css.lang
 assets/shopifyeditor.plugin
 assets/push.png
 assets/shopifyeditor.py

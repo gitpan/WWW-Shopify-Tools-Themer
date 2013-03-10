@@ -67,7 +67,7 @@ use MIME::Base64;
 use threads;
 use threads::shared;
 
-our $VERSION = '0.03';
+our $VERSION = '0.04';
 
 =head1 WWW::Shopify::Tools::Themer
 
@@ -79,8 +79,9 @@ The core class that deals with theme management, pushing and pulling to and from
 
 sub new {
 	my ($package, $settings) = @_;
+	die "Please pass in url, password, apikey xor email." unless defined $settings->{url} && defined $settings->{password} && (defined $settings->{apikey} xor defined $settings->{email});
 	my $SA = new WWW::Shopify::Private($settings->{url}, $settings->{apikey}, $settings->{password});
-	die unless defined $settings->{url} && defined $settings->{password} && defined $settings->{apikey};
+	$SA->login_admin($settings->{email}, $settings->{password}) if $settings->{email};
 	my $threads = (defined $settings->{threads}) ? $settings->{threads} : 4;
 	return bless { _SA => $SA, _manifest => new WWW::Shopify::Tools::Themer::Manifest(), _threads => $threads }, $package;
 }
@@ -89,10 +90,10 @@ use IO::Handle;
 STDERR->autoflush(1);
 STDOUT->autoflush(1);
 
-sub threads() { return $_[0]->{_threads}; }
-sub log($$) { print STDOUT $_[1]; }
-sub manifest() { return $_[0]->{_manifest}; }
-sub sa() { return $_[0]->{_SA}; }
+sub threads { return $_[0]->{_threads}; }
+sub log { print STDOUT $_[1]; }
+sub manifest { return $_[0]->{_manifest}; }
+sub sa { return $_[0]->{_SA}; }
 
 =head1 get_themes
 
@@ -177,8 +178,6 @@ sub pull {
 			}
 		#});
 	}
-	#for (@{threads->list(threads::joinable)}) { $_->join(); }
-	$self->log("Done.\n");
 }
 
 =head1 push_all
@@ -253,7 +252,6 @@ sub push {
 			}
 		#}
 	}
-	$self->log("Done.\n");
 }
 
 1;

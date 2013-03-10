@@ -43,7 +43,7 @@
    "provides" : {
       "WWW::Shopify::Tools::Themer" : {
          "file" : "lib/WWW/Shopify/Tools/Themer.pm",
-         "version" : "0.03"
+         "version" : "0.04"
       },
       "WWW::Shopify::Tools::Themer::Manifest" : {
          "file" : "lib/WWW/Shopify/Tools/Themer.pm",
@@ -56,5 +56,5 @@
          "http://dev.perl.org/licenses/"
       ]
    },
-   "version" : "0.03"
+   "version" : "0.04"
 }
