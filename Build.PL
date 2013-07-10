@@ -26,7 +26,7 @@ my $build = Module::Build->new(
 		'File::ShareDir' => 0,
 		'Term::Prompt' => 0,
 		'Pod::Usage' => 0,
-		'WWW::Shopify' => 0,
+		'WWW::Shopify' => 0.9,
 	},
 	script_files => ['shopify-themer.pl']
 );

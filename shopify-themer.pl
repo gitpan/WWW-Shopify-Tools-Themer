@@ -233,7 +233,7 @@ my %actions = (
 			$theme = first { $_->{name} eq $ARGS[1] } @{$STC->manifest->{themes}}
 		}
 		die "Unable to find theme " . $ARGS[1] . "\n" unless $theme;
-		$STC->push($theme, $settings->{working});
+		$STC->push(new WWW::Shopify::Model::Theme($theme), $settings->{working});
 	},
 	'pull' => sub {
 		die "Please specify a specific theme to pull.\n" unless int(@ARGS) >= 2;
@@ -245,7 +245,7 @@ my %actions = (
 			$theme = first { $_->{name} eq $ARGS[1] } @{$STC->manifest->{themes}}
 		}
 		die "Unable to find theme " . $ARGS[1] . "\n" unless $theme;
-		$STC->pull($theme, $settings->{working});
+		$STC->pull(new WWW::Shopify::Model::Theme($theme), $settings->{working});
 	},
 	'exit' => sub { $interactive = undef; }
 );

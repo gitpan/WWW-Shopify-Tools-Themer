@@ -67,7 +67,7 @@ use MIME::Base64;
 use threads;
 use threads::shared;
 
-our $VERSION = '0.04';
+our $VERSION = '0.06';
 
 =head1 WWW::Shopify::Tools::Themer
 
@@ -110,7 +110,7 @@ sub get_themes {
 
 =head1 pull_all
 
-pull_all essentially pulls all themes from the remote site. Gets all themes using the API, and then calls pull on each of them.
+pull_all essentially pulls all themes from the remote site. Gets all themes using the API, and then calls pull on each of them. Also pulls on pages.
 
 	$STC = new WWW::Shopify::Tools::Themer($settings);
 	$STC->pull_all();
@@ -119,7 +119,8 @@ pull_all essentially pulls all themes from the remote site. Gets all themes usin
 
 sub pull_all {
 	my ($self, $folder) = @_;
-	$self->pull($_, $folder) for (@{$self->manifest->{themes}});
+	$self->pull(new WWW::Shopify::Model::Theme($_), $folder) for (@{$self->manifest->{themes}});
+	$self->pull_pages($folder);
 }
 
 =head1 pull
@@ -135,21 +136,38 @@ Files that are not present locally and remotely present will be pulled.
 
 =cut
 
+sub pull_pages {
+	my ($self, $folder) = @_;
+	$folder = "." unless defined $folder;
+	my $manifest = $self->manifest;
+	make_path("$folder/pages");
+	foreach my $page ($self->sa->get_all("Page")) {
+		my $path = "$folder/pages/" . $page->handle . ".html";
+		$manifest->remote($path, $page->updated_at);
+		next if !$manifest->has_remote_changes($path);
+		$manifest->local($path, $page->updated_at);
+		write_file($path, $page->body_html) or die $!;
+		$manifest->system($path, DateTime->from_epoch(epoch => stat($path)->mtime));
+	}
+}
+
 sub pull {
 	# Get all assets.
 	my ($self, $theme, $folder) = @_;
 	$folder = "." unless defined $folder;
 	my $manifest = $self->manifest();
-	my $n = "$folder/" . $theme->{name};
+	my $truncated = $self->sa->shop_url;
+	$truncated =~ s/\.myshopify.com//;
+	my $n = "$folder/$truncated-" . $theme->{id};
 	make_path($n); write_file("$n/.info", encode_json({ id => $theme->{id} }));
-	my @assets = $self->sa()->get_all('Asset', {parent => $theme->{id}});
+	my @assets = $self->sa()->get_all('Asset', {parent => $theme});
 	# We do a threaded pull, because we can.
 	my @asset_ids:shared = (0 .. int(@assets)-1);
 
 	my %present = map { "$n/" . $_->key => 1 } @assets;
 	my @files = $self->manifest->files;
 	# Check to see if the file is deleted on the server side. If so, then delete it on our side.
-	for (grep { !exists $present{$_} } @files) {
+	for (grep { !exists $present{$_} && $_ =~ m/$n/ } @files) {
 		delete $self->manifest->{files}->{$_};
 		unlink($_);
 	}
@@ -171,7 +189,7 @@ sub pull {
 					write_file($path, get($asset->public_url())) or die $!;
 				} else {
 					# Assets which don't have a public url, we have to get individually.
-					my $full_asset = $self->sa()->get('Asset', $asset->key(), {parent => $theme->{id}});
+					my $full_asset = $self->sa()->get('Asset', $asset->key(), {parent => $theme});
 					write_file($path, {binmode => ':raw'}, $full_asset->value());
 				}
 				$manifest->system($path, DateTime->from_epoch(epoch => stat($path)->mtime));
@@ -182,13 +200,14 @@ sub pull {
 
 =head1 push_all
 
-Pushes all assets from all themes, if they need to be pushed.
+Pushes all assets from all themes, if they need to be pushed, as well as pages.
 
 =cut
 
 sub push_all {
 	my ($self, $folder) = @_;
-	$self->push($_, $folder) for (@{$self->manifest->{themes}});
+	$self->push(new WWW::Shopify::Model::Theme($_), $folder) for (@{$self->manifest->{themes}});
+	$self->push_pages($folder);
 }
 
 
@@ -204,26 +223,79 @@ Files that are locally unchanged will only be pushed if the file is missing on t
 
 =cut
 
+use List::Util qw(first);
+sub push_pages {
+	my ($self, $folder) = @_;
+	$folder = "." unless defined $folder;
+	my $manifest = $self->manifest;
+
+	my @remote_pages = $self->sa->get_all("Page");
+	$manifest->remote("$folder/pages/" . $_->handle . ".html", $_->updated_at) for (@remote_pages);
+
+	my @pages = ();
+	my %present = ();
+	find({no_chdir => 1, wanted => sub { 
+		my ($path, $name) = ($_, basename($_));
+		return if ($name =~ m/^\./) || -d $path || $name !~ m/\.html$/;
+		$present{$path} = 1;
+		return if !$manifest->has_local_changes($path);
+		die new WWW::Shopify::Exception("Unable to push to repo; there are remote changes on $path.") if $manifest->has_remote_changes($path);
+		push(@pages, $path);
+	}}, "$folder/pages/");
+	for (grep { !exists $present{"$folder/pages/" . $_->handle . ".html"} } @remote_pages) {
+		$self->log("[000.00%] Deleting " . $_->handle . "\n");
+		$self->sa->delete($_);
+	}
+	foreach my $path (@pages) {
+		die new WWW::Shopify::Exception("Can't determine handle.") unless $path =~ m/\/?([\w\-]+)\.html$/;
+		my $handle = $1;
+		$self->log("[000.00%] Pushing $handle...\n");
+		my $remote_page = first { $_->handle eq $handle } @remote_pages;
+		if ($remote_page) {
+			$remote_page->body_html(scalar(read_file($path)));
+			$remote_page = $self->sa->update($remote_page);
+		}
+		else {
+			$remote_page = $self->sa->create(new WWW::Shopify::Model::Page({ 
+				body_html => read_file($path),
+				handle => $handle,
+				title => join(" ", map { ucfirst($_) } split(/-/, $handle)) 
+			}));
+		}
+		$manifest->system($path, DateTime->from_epoch(epoch => stat($path)->mtime));
+		$manifest->local($path, $remote_page->updated_at);
+		$manifest->remote($path, $remote_page->updated_at);
+	}
+}
+
+
 sub push {
 	my ($self, $theme, $folder) = @_;
 	$folder = "." unless defined $folder;
 	my $manifest = $self->manifest();
-	my $n = "$folder/" . $theme->{name};
+	my $truncated = $self->sa->shop_url;
+	$truncated =~ s/\.myshopify.com//;
+	my $n = "$folder/$truncated-" . $theme->{id};
 
-	my @assets = $self->sa()->get_all('Asset', {parent => $theme->{id}});
-	$manifest->remote("$n/" . $_->key(), $_->updated_at) for (@assets);
+	my @remote_assets = $self->sa()->get_all('Asset', {parent => $theme});
+	$manifest->remote("$n/" . $_->key(), $_->updated_at) for (@remote_assets);
 
-	my %present = map { "$n/" . $_->key() => 1 } @assets;
+	my %present = ();
 
-	@assets = ();
+	my @assets = ();
 	find({no_chdir => 1, wanted => sub { 
 		my ($path, $name) = ($_, basename($_));
 		return if ($name =~ m/^\./);
 		return if (-d $path);
+		$present{$path} = 1;
 		return if !$manifest->has_local_changes($path);
 		die new WWW::Shopify::Exception("Unable to push to repo; there are remote changes on $path.") if $manifest->has_remote_changes($path);
 		push(@assets, $path);
 	}}, $n);
+	for (grep { !exists $present{"$n/" . $_->key()} } @remote_assets) {
+		$self->log("[000.00%] Deleting " . $_->key . "\n");
+		$self->sa->delete($_);
+	}
 
 	my @asset_ids:shared = (0 .. int(@assets)-1);
 	for (my $c = 0; $c < $self->threads(); ++$c) {
@@ -235,9 +307,13 @@ sub push {
 				die $path unless $path =~ m/$n\/(.*?\.(\w+))$/;
 				my $asset_key = $1;
 				my $asset_extension = $2;
-				my $asset = new WWW::Shopify::Model::Asset({key => $asset_key, container_id => $theme->{id}});
-				$asset->value(scalar(read_file($path))) if ($asset_extension eq "liquid" || $asset_extension eq "json" || $asset_extension eq "js");
-				$asset->attachment(encode_base64(scalar(read_file($path, encoding => "binary")))) if ($asset_extension =~ m/^(jpg|png|gif)$/);
+				my $asset = new WWW::Shopify::Model::Asset({key => $asset_key, associated_parent => $theme});
+				if ($asset_extension eq "liquid" || $asset_extension eq "json" || $asset_extension eq "js" || $asset_extension eq "css") {
+					$asset->value(scalar(read_file($path)));
+				}
+				else {
+					$asset->attachment(encode_base64(scalar(read_file($path, encoding => "binary"))));
+				}
 				$self->log("[" . sprintf("%3.2f", (1.0 - int(@asset_ids)/int(@assets))*100.0) . "%] Pushing $path...\n");
 				if ($manifest->exists($_)) {
 					$asset = $self->sa->update($asset);

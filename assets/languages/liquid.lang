@@ -190,6 +190,8 @@
 		<keyword>shop.vendors</keyword>
 		<keyword>shop.types</keyword>
 		<keyword>shop</keyword>
+
+		<keyword>settings</keyword>
 	</context>
 
 	<context id="full-liquid" class="no-spell-check">
