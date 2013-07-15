@@ -15,7 +15,7 @@ name: WWW-Shopify-Tools-Themer
 provides:
   WWW::Shopify::Tools::Themer:
     file: lib/WWW/Shopify/Tools/Themer.pm
-    version: 0.06
+    version: 0.07
   WWW::Shopify::Tools::Themer::Manifest:
     file: lib/WWW/Shopify/Tools/Themer.pm
     version: 0
@@ -38,4 +38,4 @@ requires:
   WWW::Shopify: 0.9
 resources:
   license: http://dev.perl.org/licenses/
-version: 0.06
+version: 0.07

@@ -73,9 +73,11 @@ shopify-themer.pl action [options]
 
 =head1 DESCRIPTION
 
-Shopify themer is a simple script which uses WWW::Shopify::Private to 
-fetch themes and assets from a Shopify store. It is meant to be used
-as either a standalone application, or integrated with Gedit as a plugin.
+Shopify themer is a simple script which uses L<WWW::Shopify::Private> and
+L<WWW::Shopify> to fetch themes and assets from a Shopify store. It is
+meant to be used as either a standalone application, or integrated with
+Gedit as a plugin. It also has the ability to fetch/push pages from the
+Shopify store.
 
 The gedit plugin is written in python, but ultimately is simply a wrapper
 around this script. Currently, support is limited to those OSs which can
@@ -83,7 +85,7 @@ make symlinks and can install gedit. This means that it should also work
 (experimentally) on Windows and Mac. The system is mainly tested on Linux,
 so support for Linux is definitely higher priority than for other systmes.
 
-Normally, you only have to specify the shop url, api key and password
+Normally, you only have to specify the shop url, api key/email and password
 once per working directory/site. Don't try and create multiple site themes
 in the same directory as this is a _BAD_ _IDEA_. 
 
@@ -148,7 +150,7 @@ if ($action eq 'installGedit') {
 	}
 
 	my $dist_directory = dist_dir('WWW-Shopify-Tools-Themer');
-	my ($plugin_directory, $target_directory, $language_directory);
+	my ($plugin_directory, $target_directory, $language_directory, $icon_directory);
 	if ($^O !~ m/MSWin/i) {
 		# *NIX Derivatives install, probably.
 		die "Must have HOME environment variable defined; Sorry, automatic gedit installation isn't supported without this.\n" unless $ENV{'HOME'};
@@ -163,6 +165,7 @@ if ($action eq 'installGedit') {
 		$plugin_directory = "$share_directory/gedit/plugins";
 		$target_directory = "$plugin_directory/shopifyeditor";
 		$language_directory = "$share_directory/gtksourceview-3.0";
+		$icon_directory = "$share_directory/icons/hicolor/scalable/apps";
 	}
 	else {
 		die "Can't find program files environment variable." unless $ENV{'PROGRAMFILES'};
@@ -179,20 +182,30 @@ if ($action eq 'installGedit') {
 		$plugin_directory = "$share_directory/plugins";
 		$target_directory = "$plugin_directory/shopifyeditor";
 		$language_directory = "$share_directory/gtksourceview-2.0";
+		$icon_directory = "$share_directory/icons/hicolor/scalable/apps";
 	}
 	if (!-e $target_directory) {
 		print "Checking for presence of gedit settings directory in $plugin_directory... ";
 		prompt_directory($plugin_directory);
 		print "Symlinking sharedir to directory... ";
 		die "Can't symlink, for some reason.\n" if symlink($dist_directory, $target_directory) != 1;
-		print "Yes.\n";
+		print "OK.\n";
 	}
 	if (!-e "$language_directory/language-specs") {
 		print "Checking for presence of source view languages in $language_directory... ";
 		prompt_directory($language_directory);
 		print "Symlinking language dir to directory... ";
 		die "Can't symlink for some reason.\n" if symlink("$dist_directory/languages", "$language_directory/language-specs") != 1;
-		print "Yes.\n";
+		print "OK.\n";
+	}
+	if (!-e "$icon_directory") {
+		print "Checking for presence of icon directory in $icon_directory... ";
+		prompt_directory($icon_directory);
+	}
+	if (!-l "$icon_directory/shopify-icon.png") {
+		print "Symlinking icon to directory... ";
+		die "Can't symlink, for some reason.\n" if symlink("$dist_directory/shopify-icon.png", "$icon_directory/shopify-icon.png") != 1;
+		print "OK.\n";
 	}
 	print "Done.\n";
 	exit(0);
@@ -274,7 +287,7 @@ do {
 				}
 			}
 			else {
-				print $@->error
+				print $@->error;
 			}
 		}
 	}

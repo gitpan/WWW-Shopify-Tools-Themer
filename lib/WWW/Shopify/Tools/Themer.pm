@@ -67,13 +67,17 @@ use MIME::Base64;
 use threads;
 use threads::shared;
 
-our $VERSION = '0.06';
+our $VERSION = '0.07';
 
 =head1 WWW::Shopify::Tools::Themer
 
 The core class that deals with theme management, pushing and pulling to and from a shopify store.
 
 	my $STC = new WWW::Shopify::Tools::Themer({url => $myurl, apikey => $myapikey, password => $mypassword});
+	OR
+	my $STC = new WWW::Shopify::Tools::Themer({url => $myurl, email => $myemail, password => $mypassword});
+
+Can use either a private API key, or a password.
 
 =cut
 
@@ -97,7 +101,7 @@ sub sa { return $_[0]->{_SA}; }
 
 =head1 get_themes
 
-get_themes returns an array of all the themes present in the shop, with the active theme first.s
+get_themes returns an array of all the themes present in the shop, with the active theme first.
 
 =cut
 
@@ -113,7 +117,7 @@ sub get_themes {
 pull_all essentially pulls all themes from the remote site. Gets all themes using the API, and then calls pull on each of them. Also pulls on pages.
 
 	$STC = new WWW::Shopify::Tools::Themer($settings);
-	$STC->pull_all();
+	$STC->pull_all([$folder]);
 
 =cut
 
@@ -123,12 +127,11 @@ sub pull_all {
 	$self->pull_pages($folder);
 }
 
-=head1 pull
+=head1 pull_pages
 
-Pulls all assets from a particular theme and then dumps them into the working folder, in a directory named for the particular theme.
+Pulls all pages from a store and dumps them into the working/specified folder, in a directory named pages.
 
-	my @themes = $sa->get_all('ShopifyAPI::Model::Theme');
-	$STC->pull($themes[2]);
+	$STC->pull_pages([$folder]);
 
 Files that are locally and remotely changed will be overwritten locally, so keep an eye out for this.
 Files that are locally not, and remotely chagned will be overritten locally.
@@ -150,6 +153,19 @@ sub pull_pages {
 		$manifest->system($path, DateTime->from_epoch(epoch => stat($path)->mtime));
 	}
 }
+
+=head1 pull
+
+Pulls all assets from a particular theme and then dumps them into the working/specified folder, in a directory named for the particular theme.
+
+	my @themes = $sa->get_all('ShopifyAPI::Model::Theme');
+	$STC->pull($themes[2], [$folder]);
+
+Files that are locally and remotely changed will be overwritten locally, so keep an eye out for this.
+Files that are locally not, and remotely chagned will be overritten locally.
+Files that are not present locally and remotely present will be pulled.
+
+=cut
 
 sub pull {
 	# Get all assets.
@@ -210,12 +226,11 @@ sub push_all {
 	$self->push_pages($folder);
 }
 
+=head1 push_pages
 
-=head1 push
+Pushes all pages that need to be pushed.
 
-Pushes all assets from a particular theme that need to be pushed.
-
-	$STC->push($theme);
+	$STC->push_pages([$folder]);
 
 Files that are locally changed, and remotely not, will be pushed.
 Files that are locally changed, and remotely changed, will not be pushed.
@@ -246,10 +261,11 @@ sub push_pages {
 		$self->log("[000.00%] Deleting " . $_->handle . "\n");
 		$self->sa->delete($_);
 	}
-	foreach my $path (@pages) {
+	foreach my $i (0..$#pages) {
+		my $path = $pages[$i];
 		die new WWW::Shopify::Exception("Can't determine handle.") unless $path =~ m/\/?([\w\-]+)\.html$/;
 		my $handle = $1;
-		$self->log("[000.00%] Pushing $handle...\n");
+		$self->log("[" . sprintf("%3.2f", ($i/int(@pages))*100.0) . "%] Pushing $handle...\n");
 		my $remote_page = first { $_->handle eq $handle } @remote_pages;
 		if ($remote_page) {
 			$remote_page->body_html(scalar(read_file($path)));
@@ -268,6 +284,17 @@ sub push_pages {
 	}
 }
 
+=head1 push
+
+Pushes all assets from a particular theme that need to be pushed.
+
+	$STC->push($theme, [$folder]);
+
+Files that are locally changed, and remotely not, will be pushed.
+Files that are locally changed, and remotely changed, will not be pushed.
+Files that are locally unchanged will only be pushed if the file is missing on the server.
+
+=cut
 
 sub push {
 	my ($self, $theme, $folder) = @_;

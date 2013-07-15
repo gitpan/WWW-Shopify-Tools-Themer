@@ -1,6 +1,6 @@
 from gettext import gettext as _
 from gi.repository import GObject, Gtk, Gedit, PeasGtk
-import time, threading, subprocess, re, json, os, hashlib, urllib2
+import time, threading, subprocess, re, json, os, hashlib, urllib2, sys
 
 ui_str = """<ui>
   <menubar name="MenuBar">
@@ -36,8 +36,17 @@ class ShopifyEditorPlugin(GObject.Object, Gedit.WindowActivatable):
 			pass
 		for f in files:
 			project = ShopifyProject(self)
-			project.enable_file(f)
-			self.register_project(project)
+			try:
+				project.enable_file(f)
+				self.register_project(project)
+			except IOError as e:
+				pass;
+	
+	def show_error(self, message):
+		md = gtk.MessageDialog(self, gtk.DIALOG_DESTROY_WITH_PARENT, gtk.MESSAGE_INFO, gtk.BUTTONS_ERROR, message)
+		md.run()
+		md.destroy()
+
 		
 	def get_project_directories(self):
 		return self.projects.keys()
@@ -50,6 +59,10 @@ class ShopifyEditorPlugin(GObject.Object, Gedit.WindowActivatable):
 				f.write(json.dumps(self.get_project_directories()))
 		except IOError as e:
 			pass
+		
+		for project in self.projects.values():
+			project.cleanup()
+		projects = {}
 
 	def do_update_state(self):
 		pass
@@ -151,8 +164,11 @@ class ShopifyEditorPlugin(GObject.Object, Gedit.WindowActivatable):
 		response = file_chooser.run()
 		if response == Gtk.ResponseType.OK:
 			project = ShopifyProject(self)
-			project.enable_file(file_chooser.get_filename())
-			self.register_project(project)
+			try:
+				project.enable_file(file_chooser.get_filename())
+				self.register_project(project)
+			except IOError as e:
+				self.show_error("Unable to find an existing project in this folder.")
 		file_chooser.destroy()
 
 	def register_project(self, project):
@@ -176,15 +192,17 @@ class ShopifyProject():
 		self.plugin = plugin
 		self.fullbox = None
 		self.is_busy = 0
-
 	def __del__(self):
 		self.cleanup()
 
 	def cleanup(self):
 		self.plugin.unregister_project(self)
 		self.remove_menu()
+		if self.shop_themer != None:
+			self.shop_themer.kill()
+			self.shop_themer = None
 
-	# Runs the actual script.
+	# Creates the appropriate arguments for a script.
 	def themer_arguments(self, action, argument = None):
 		# Seriously Pyhton? It's possible I'm not doing it right, but damn, that array manipulation is cumbersome.
 		arguments = ['shopify-themer.pl', '--wd=' + os.path.abspath(self.settings['directory']), '--password=' + self.settings['password'], '--url=' + self.settings['url'], action]
@@ -199,11 +217,8 @@ class ShopifyProject():
 	# Enable the project by loading a settings file in the specified directory.
 	def enable_file(self, directory):
 		settings = {}
-		try:
-			with open(directory + '/' + '.shopifygedit') as f:
-				settings = json.loads(f.read())
-		except IOError as e:
-			print 'Unable to open file: ' + directory + '/' + '.shopifygedit'
+		with open(directory + '/' + '.shopifygedit') as f:
+			settings = json.loads(f.read())
 		self.enable_settings(settings['name'], settings['url'], settings['api_key'], settings['email'], settings['password'], directory)
 	
 	# Enables the project through arguments.
@@ -216,6 +231,7 @@ class ShopifyProject():
 		except IOError as e:
 			print 'Unable to open file: ' + directory + '/' + '.shopifygedit'
 		self.insert_menu()
+		self.shop_themer = subprocess.Popen(self.themer_arguments("interactive"), stdout=subprocess.PIPE, stdin=subprocess.PIPE)
 
 	def update_theme_listing(self):
 		#self.theme_selector.clear_items()
@@ -282,9 +298,9 @@ class ShopifyProject():
 			self.plugin.window.get_bottom_panel().remove_item(self.fullbox)
 
 	def work(self, argument):
-		cmd = subprocess.Popen(argument, stdout=subprocess.PIPE);
+		self.shop_themer.stdin.write(" ".join(argument) + "\n");
 		while True:
-			line = cmd.stdout.readline()
+			line = self.shop_themer.stdout.readline()
 			display = line.rstrip("\n")
 			m = re.search("^\[(\d+\.\d+)%\] (.*)\n", line)
 			self.progress_bar.set_fraction(0.0)
@@ -292,10 +308,9 @@ class ShopifyProject():
 				real = float(m.group(1)) / 100.0
 				self.progress_bar.set_fraction(real)
 				display = m.group(2)
-			if line == "":
-				break
 			self.status_label.set_text(display)
-		cmd.wait()
+			if display == "" or display == "Done.":
+				break
 		self.progress_bar.set_fraction(1.0)
 		self.enable_buttons()
 	
@@ -315,9 +330,9 @@ class ShopifyProject():
 		if self.theme_selector.get_active_text() == None:
 			raise Exception("Should never be None for theme selector active.")
 		if self.theme_selector.get_active_text() == "<< ALL >>":
-			argument_array = self.themer_arguments('pushAll')
+			argument_array = ['pushAll']
 		else:
-			argument_array = self.themer_arguments('push', self.theme_selector.get_active_text())
+			argument_array = ['push', self.theme_selector.get_active_text()]
 		wt = PushThread(self.work, argument_array)
 		wt.start()
 
@@ -327,9 +342,9 @@ class ShopifyProject():
 		if self.theme_selector.get_active_text() == None:
 			raise Exception("Should never be None for theme selector active.")
 		if self.theme_selector.get_active_text() == "<< ALL >>":
-			argument_array = self.themer_arguments('pullAll')
+			argument_array = ['pullAll']
 		else:
-			argument_array = self.themer_arguments('pull', self.theme_selector.get_active_text())
+			argument_array = ['pull', self.theme_selector.get_active_text()]
 		wt = PullThread(self.work, argument_array)
 		wt.start()
 
