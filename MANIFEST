@@ -6,6 +6,7 @@ assets/shopifyeditor.plugin
 assets/push.png
 assets/shopifyeditor.py
 assets/refresh.png
+assets/refresh-off.png
 shopify-themer.pl
 MANIFEST
 Build.PL

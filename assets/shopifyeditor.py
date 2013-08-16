@@ -309,7 +309,7 @@ class ShopifyProject():
 				self.progress_bar.set_fraction(real)
 				display = m.group(2)
 			self.status_label.set_text(display)
-			if display == "" or display == "Done.":
+			if display == "" or display == "Done." or re.search("^Error:", display):
 				break
 		self.progress_bar.set_fraction(1.0)
 		self.enable_buttons()

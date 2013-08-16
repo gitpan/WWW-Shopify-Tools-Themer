@@ -64,10 +64,10 @@ use File::Find;
 use File::stat;
 use JSON;
 use MIME::Base64;
-use threads;
-use threads::shared;
+#use threads;
+#use threads::shared;
 
-our $VERSION = '0.07';
+our $VERSION = '0.08';
 
 =head1 WWW::Shopify::Tools::Themer
 
@@ -83,7 +83,7 @@ Can use either a private API key, or a password.
 
 sub new {
 	my ($package, $settings) = @_;
-	die "Please pass in url, password, apikey xor email." unless defined $settings->{url} && defined $settings->{password} && (defined $settings->{apikey} xor defined $settings->{email});
+	die new WWW::Shopify::Exception("Please pass in url, password, apikey xor email.") unless defined $settings->{url} && defined $settings->{password} && (defined $settings->{apikey} xor defined $settings->{email});
 	my $SA = new WWW::Shopify::Private($settings->{url}, $settings->{apikey}, $settings->{password});
 	$SA->login_admin($settings->{email}, $settings->{password}) if $settings->{email};
 	my $threads = (defined $settings->{threads}) ? $settings->{threads} : 4;
@@ -98,6 +98,21 @@ sub threads { return $_[0]->{_threads}; }
 sub log { print STDOUT $_[1]; }
 sub manifest { return $_[0]->{_manifest}; }
 sub sa { return $_[0]->{_SA}; }
+
+=head1 transfer_progress($self, $type, $theme, $files_transferred, $files_remaining, $file)
+
+Called during theme pushes. Lets you easily log what's happening. Normally, simply makes formatted output to log.
+
+=cut
+
+sub transfer_progress {
+	my ($self, $type, $theme, $files_transferred, $files_total, $file) = @_;
+	my $action;
+	$action = "Pushing" if $type eq "push";
+	$action = "Pulling" if $type eq "pull";
+	$action = "Deleting" if $type eq "delete";
+	$self->log("[" . sprintf("%3.2f", ($files_transferred/$files_total)*100.0) . "%] $action $file...\n");
+}
 
 =head1 get_themes
 
@@ -199,7 +214,7 @@ sub pull {
 				$manifest->remote($path, $datetime);
 				make_path(dirname($path));
 				next if !$manifest->has_remote_changes($path);
-				$self->log("[" . sprintf("%3.2f", (1.0 - int(@asset_ids)/int(@assets))*100.0) . "%] Pulling " . $asset->key() . "...\n");
+				$self->transfer_progress("pull", $theme, int(@assets) - int(@asset_ids), int(@assets), $asset->key);
 				$manifest->local($path, $datetime);
 				if (defined $asset->public_url()) {
 					write_file($path, get($asset->public_url())) or die $!;
@@ -258,14 +273,14 @@ sub push_pages {
 		push(@pages, $path);
 	}}, "$folder/pages/");
 	for (grep { !exists $present{"$folder/pages/" . $_->handle . ".html"} } @remote_pages) {
-		$self->log("[000.00%] Deleting " . $_->handle . "\n");
+		$self->transfer_progress("delete", "pages", 0, 1, $_->handle);
 		$self->sa->delete($_);
 	}
 	foreach my $i (0..$#pages) {
 		my $path = $pages[$i];
 		die new WWW::Shopify::Exception("Can't determine handle.") unless $path =~ m/\/?([\w\-]+)\.html$/;
 		my $handle = $1;
-		$self->log("[" . sprintf("%3.2f", ($i/int(@pages))*100.0) . "%] Pushing $handle...\n");
+		$self->transfer_progress("push", "pages", $i, int(@pages), $handle);
 		my $remote_page = first { $_->handle eq $handle } @remote_pages;
 		if ($remote_page) {
 			$remote_page->body_html(scalar(read_file($path)));
@@ -273,7 +288,7 @@ sub push_pages {
 		}
 		else {
 			$remote_page = $self->sa->create(new WWW::Shopify::Model::Page({ 
-				body_html => read_file($path),
+				body_html => scalar(read_file($path)),
 				handle => $handle,
 				title => join(" ", map { ucfirst($_) } split(/-/, $handle)) 
 			}));
@@ -320,7 +335,7 @@ sub push {
 		push(@assets, $path);
 	}}, $n);
 	for (grep { !exists $present{"$n/" . $_->key()} } @remote_assets) {
-		$self->log("[000.00%] Deleting " . $_->key . "\n");
+		$self->transfer_progress("delete", $theme, 0, 1, $_->key);
 		$self->sa->delete($_);
 	}
 
@@ -341,7 +356,7 @@ sub push {
 				else {
 					$asset->attachment(encode_base64(scalar(read_file($path, encoding => "binary"))));
 				}
-				$self->log("[" . sprintf("%3.2f", (1.0 - int(@asset_ids)/int(@assets))*100.0) . "%] Pushing $path...\n");
+				$self->transfer_progress("push", $theme, int(@assets) - int(@asset_ids), int(@assets), $asset->key);
 				if ($manifest->exists($_)) {
 					$asset = $self->sa->update($asset);
 				}

@@ -273,21 +273,25 @@ do {
 		eval {
 			$actions{$action}();
 			print "Done.\n";
+			$STC->manifest->save($manifestFile);
 		};
 		if ($@) {
 			use Data::Dumper;
 			print STDERR Dumper($@);
-			if (ref($@->error) eq "HTTP::Response") {
+			if (ref($@) && ref($@->error) eq "HTTP::Response") {
 				if ($@->error->code == 500) {
-					print $@->error->content;
+					print "Error: " . $@->error->content;
 				}
 				else {
 					my $json = decode_json($@->error->content);
-					print $json->{errors}->{asset}->[0];
+					print "Error: " . $json->{errors}->{asset}->[0];
 				}
 			}
+			elsif (ref($@)) {
+				print "Error: " . $@->error;
+			}
 			else {
-				print $@->error;
+				print "Error: $@\n";
 			}
 		}
 	}
@@ -295,8 +299,6 @@ do {
 		print STDERR "Unknown action: $action.\n";
 	}
 } while ($interactive);
-
-$STC->manifest->save($manifestFile);
 
 exit 0;
 
