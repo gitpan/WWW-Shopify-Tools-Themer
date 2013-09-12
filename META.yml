@@ -6,7 +6,7 @@ build_requires: {}
 configure_requires:
   Module::Build: 0.38
 dynamic_config: 1
-generated_by: 'Module::Build version 0.4005, CPAN::Meta::Converter version 2.120921'
+generated_by: 'Module::Build version 0.4003, CPAN::Meta::Converter version 2.120921'
 license: perl
 meta-spec:
   url: http://module-build.sourceforge.net/META-spec-v1.4.html
@@ -15,7 +15,7 @@ name: WWW-Shopify-Tools-Themer
 provides:
   WWW::Shopify::Tools::Themer:
     file: lib/WWW/Shopify/Tools/Themer.pm
-    version: 0.08
+    version: 0.09
   WWW::Shopify::Tools::Themer::Manifest:
     file: lib/WWW/Shopify/Tools/Themer.pm
     version: 0
@@ -38,4 +38,4 @@ requires:
   WWW::Shopify: 0.9
 resources:
   license: http://dev.perl.org/licenses/
-version: 0.08
+version: 0.09

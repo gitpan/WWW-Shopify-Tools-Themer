@@ -67,7 +67,7 @@ use MIME::Base64;
 #use threads;
 #use threads::shared;
 
-our $VERSION = '0.08';
+our $VERSION = '0.09';
 
 =head1 WWW::Shopify::Tools::Themer
 
@@ -96,7 +96,7 @@ STDOUT->autoflush(1);
 
 sub threads { return $_[0]->{_threads}; }
 sub log { print STDOUT $_[1]; }
-sub manifest { return $_[0]->{_manifest}; }
+sub manifest { $_[0]->{_manifest} = $_[1] if defined $_[1]; return $_[0]->{_manifest}; }
 sub sa { return $_[0]->{_SA}; }
 
 =head1 transfer_progress($self, $type, $theme, $files_transferred, $files_remaining, $file)
@@ -113,6 +113,32 @@ sub transfer_progress {
 	$action = "Deleting" if $type eq "delete";
 	$self->log("[" . sprintf("%3.2f", ($files_transferred/$files_total)*100.0) . "%] $action $file...\n");
 }
+
+=head1 read_exception 
+
+Spits out a nice exception message from all the underlying exception types that may be thrown.
+
+=cut
+
+sub read_exception {
+	my ($self, $exception) = @_;
+	if (ref($exception) && ref($exception->error) eq "HTTP::Response") {
+		if ($exception->error->code == 500) {
+			return $exception->error->decoded_content;
+		}
+		else {
+			my $json = decode_json($exception->error->content);
+			return $json->{errors}->{asset}->[0];
+		}
+	}
+	elsif (ref($exception)) {
+		return $exception->error;
+	}
+	else {
+		return "$exception";
+	}
+}
+
 
 =head1 get_themes
 

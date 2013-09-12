@@ -275,24 +275,8 @@ do {
 			print "Done.\n";
 			$STC->manifest->save($manifestFile);
 		};
-		if ($@) {
-			use Data::Dumper;
-			print STDERR Dumper($@);
-			if (ref($@) && ref($@->error) eq "HTTP::Response") {
-				if ($@->error->code == 500) {
-					print "Error: " . $@->error->content;
-				}
-				else {
-					my $json = decode_json($@->error->content);
-					print "Error: " . $json->{errors}->{asset}->[0];
-				}
-			}
-			elsif (ref($@)) {
-				print "Error: " . $@->error;
-			}
-			else {
-				print "Error: $@\n";
-			}
+		if (my $exception = $@) {
+			print STDERR "Error: " . $STC->read_exception($exception) . "\n";
 		}
 	}
 	else {
