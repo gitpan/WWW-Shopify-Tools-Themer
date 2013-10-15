@@ -10,7 +10,9 @@ package WWW::Shopify::Tools::Themer::Manifest;
 use JSON;
 use File::Slurp::Unicode;
 use File::stat;
+use Scalar::Util qw(weaken);
 
+# When we save things down, we translate everything to absolute paths. W
 sub new { return bless { }, $_[0]; }
 sub load { 
 	die unless -e $_[1];
@@ -36,17 +38,43 @@ sub save {
 	write_file($_[1], encode_json($json)) or die $!;
 }
 
-sub exists { return (exists $_[0]->{files}->{$_[1]}); }
-sub local { $_[0]->{files}->{$_[1]}->{'local'} = $_[2] if int(@_) == 3; return $_[0]->{files}->{$_[1]}->{'local'}; }
-sub remote { $_[0]->{files}->{$_[1]}->{'remote'} = $_[2] if int(@_) == 3; return $_[0]->{files}->{$_[1]}->{'remote'}; }
-sub system { $_[0]->{files}->{$_[1]}->{'system'} = $_[2] if int(@_) == 3; return $_[0]->{files}->{$_[1]}->{'system'}; }
+sub local_path {
+	my ($self, $path) = @_;
+	my $directory = $self->directory;
+	return undef unless $path;
+	$path =~ s/^$directory//g;
+	return $path;
+}
+
+sub absolute_path {
+	my ($self, $path) = @_;
+	my $directory = $self->directory;
+	$path = "$directory/$path" unless $path =~ m/^$directory/;
+	return $path;
+}
+
+sub exists { return (exists $_[0]->{files}->{$_[0]->local_path($_[1])}); }
+sub local { my $path = $_[0]->local_path($_[1]); $_[0]->{files}->{$path}->{'local'} = $_[2] if int(@_) == 3; return $_[0]->{files}->{$path}->{'local'}; }
+sub remote { my $path = $_[0]->local_path($_[1]); $_[0]->{files}->{$path}->{'remote'} = $_[2] if int(@_) == 3; return $_[0]->{files}->{$path}->{'remote'}; }
+sub system { my $path = $_[0]->local_path($_[1]); $_[0]->{files}->{$path}->{'system'} = $_[2] if int(@_) == 3; return $_[0]->{files}->{$path}->{'system'}; }
 sub files { return keys(%{$_[0]->{files}}); }
+
+sub themer {
+	my ($self, $themer) = @_;
+	if (defined $themer) {
+		$_[0]->{themer} = $themer;
+		weaken($_[0]->{themer});
+	}
+	return $_[0]->{themer};
+}
+
+sub directory { return $_[0]->themer->directory; }
 
 sub has_local_changes($$) { 
 	my ($self, $path) = @_;
 	#return 0 if !$self->exists($path) || !(-e $path) || !$self->local($path);
 	return 1 if !$self->exists($path) || !(-e $path) || !$self->local($path);
-	return ($self->system($path) < DateTime->from_epoch(epoch => stat($path)->mtime));
+	return ($self->system($path) < DateTime->from_epoch(epoch => stat($self->absolute_path($path))->mtime));
 }
 sub has_remote_changes($$) {
 	my ($self, $path) = @_;
@@ -67,15 +95,15 @@ use MIME::Base64;
 #use threads;
 #use threads::shared;
 
-our $VERSION = '0.09';
+our $VERSION = '0.10';
 
 =head1 WWW::Shopify::Tools::Themer
 
 The core class that deals with theme management, pushing and pulling to and from a shopify store.
 
-	my $STC = new WWW::Shopify::Tools::Themer({url => $myurl, apikey => $myapikey, password => $mypassword});
+	my $STC = new WWW::Shopify::Tools::Themer({url => $myurl, apikey => $myapikey, password => $mypassword, directory => $mypath});
 	OR
-	my $STC = new WWW::Shopify::Tools::Themer({url => $myurl, email => $myemail, password => $mypassword});
+	my $STC = new WWW::Shopify::Tools::Themer({url => $myurl, email => $myemail, password => $mypassword, directory => $mypath});
 
 Can use either a private API key, or a password.
 
@@ -87,17 +115,35 @@ sub new {
 	my $SA = new WWW::Shopify::Private($settings->{url}, $settings->{apikey}, $settings->{password});
 	$SA->login_admin($settings->{email}, $settings->{password}) if $settings->{email};
 	my $threads = (defined $settings->{threads}) ? $settings->{threads} : 4;
-	return bless { _SA => $SA, _manifest => new WWW::Shopify::Tools::Themer::Manifest(), _threads => $threads }, $package;
+	my $directory = $settings->{directory};
+	$directory = "." unless -e $directory && -d $directory;
+	my $self = bless { _SA => $SA, _directory => $directory, _threads => $threads }, $package;
+	my $manifest = new WWW::Shopify::Tools::Themer::Manifest;
+	$self->manifest($manifest);
+	my $manifest_path = $directory . "/.shopmanifest";
+	
+	$manifest->load($manifest_path) if -e $manifest_path;
+	$manifest->themer($self);
+	return $self;
 }
 
 use IO::Handle;
 STDERR->autoflush(1);
 STDOUT->autoflush(1);
 
+sub directory { return $_[0]->{_directory}; }
 sub threads { return $_[0]->{_threads}; }
 sub log { print STDOUT $_[1]; }
-sub manifest { $_[0]->{_manifest} = $_[1] if defined $_[1]; return $_[0]->{_manifest}; }
+sub manifest { if (defined $_[1]) { $_[0]->{_manifest} = $_[1]; $_[1]->themer($_[0]); } return $_[0]->{_manifest}; }
 sub sa { return $_[0]->{_SA}; }
+sub shop_url { return $_[0]->sa->shop_url; }
+sub shop_url_truncated { my $url = $_[0]->shop_url; $url =~ s/\.myshopify.com//; return $url; }
+
+sub save_manifest {
+	my ($self) = @_;
+	my $manifest = $self->manifest;
+	$manifest->save($self->directory . "/.shopmanifest");
+}
 
 =head1 transfer_progress($self, $type, $theme, $files_transferred, $files_remaining, $file)
 
@@ -111,7 +157,7 @@ sub transfer_progress {
 	$action = "Pushing" if $type eq "push";
 	$action = "Pulling" if $type eq "pull";
 	$action = "Deleting" if $type eq "delete";
-	$self->log("[" . sprintf("%3.2f", ($files_transferred/$files_total)*100.0) . "%] $action $file...\n");
+	$self->log("[" . sprintf("%03.2f", ($files_transferred/$files_total)*100.0) . "%]" . ($theme->{name} ? " (" . $theme->{name} . ")" : '') . " $action $file...\n");
 }
 
 =head1 read_exception 
@@ -139,7 +185,6 @@ sub read_exception {
 	}
 }
 
-
 =head1 get_themes
 
 get_themes returns an array of all the themes present in the shop, with the active theme first.
@@ -163,9 +208,9 @@ pull_all essentially pulls all themes from the remote site. Gets all themes usin
 =cut
 
 sub pull_all {
-	my ($self, $folder) = @_;
-	$self->pull(new WWW::Shopify::Model::Theme($_), $folder) for (@{$self->manifest->{themes}});
-	$self->pull_pages($folder);
+	my ($self) = @_;
+	$self->pull(new WWW::Shopify::Model::Theme($_)) for ($self->get_themes);
+	$self->pull_pages;
 }
 
 =head1 pull_pages
@@ -181,8 +226,8 @@ Files that are not present locally and remotely present will be pulled.
 =cut
 
 sub pull_pages {
-	my ($self, $folder) = @_;
-	$folder = "." unless defined $folder;
+	my ($self) = @_;
+	my $folder = $self->directory;
 	my $manifest = $self->manifest;
 	make_path("$folder/pages");
 	foreach my $page ($self->sa->get_all("Page")) {
@@ -193,6 +238,7 @@ sub pull_pages {
 		write_file($path, $page->body_html) or die $!;
 		$manifest->system($path, DateTime->from_epoch(epoch => stat($path)->mtime));
 	}
+	$self->save_manifest;
 }
 
 =head1 pull
@@ -210,11 +256,10 @@ Files that are not present locally and remotely present will be pulled.
 
 sub pull {
 	# Get all assets.
-	my ($self, $theme, $folder) = @_;
-	$folder = "." unless defined $folder;
+	my ($self, $theme) = @_;
+	my $folder = $self->directory;
 	my $manifest = $self->manifest();
-	my $truncated = $self->sa->shop_url;
-	$truncated =~ s/\.myshopify.com//;
+	my $truncated = $self->shop_url_truncated;
 	my $n = "$folder/$truncated-" . $theme->{id};
 	make_path($n); write_file("$n/.info", encode_json({ id => $theme->{id} }));
 	my @assets = $self->sa()->get_all('Asset', {parent => $theme});
@@ -243,16 +288,21 @@ sub pull {
 				$self->transfer_progress("pull", $theme, int(@assets) - int(@asset_ids), int(@assets), $asset->key);
 				$manifest->local($path, $datetime);
 				if (defined $asset->public_url()) {
-					write_file($path, get($asset->public_url())) or die $!;
+					my $value = get($asset->public_url());
+					$value = '' unless $value;
+					write_file($path, $value) or die $!;
 				} else {
 					# Assets which don't have a public url, we have to get individually.
 					my $full_asset = $self->sa()->get('Asset', $asset->key(), {parent => $theme});
-					write_file($path, {binmode => ':raw'}, $full_asset->value());
+					my $value = $full_asset->value();
+					$value = '' unless $value;
+					write_file($path, {binmode => ':raw'}, $value);
 				}
 				$manifest->system($path, DateTime->from_epoch(epoch => stat($path)->mtime));
 			}
 		#});
 	}
+	$self->save_manifest;
 }
 
 =head1 push_all
@@ -262,9 +312,9 @@ Pushes all assets from all themes, if they need to be pushed, as well as pages.
 =cut
 
 sub push_all {
-	my ($self, $folder) = @_;
-	$self->push(new WWW::Shopify::Model::Theme($_), $folder) for (@{$self->manifest->{themes}});
-	$self->push_pages($folder);
+	my ($self) = @_;
+	$self->push(new WWW::Shopify::Model::Theme($_)) for (@{$self->manifest->{themes}});
+	$self->push_pages;
 }
 
 =head1 push_pages
@@ -281,8 +331,8 @@ Files that are locally unchanged will only be pushed if the file is missing on t
 
 use List::Util qw(first);
 sub push_pages {
-	my ($self, $folder) = @_;
-	$folder = "." unless defined $folder;
+	my ($self) = @_;
+	my $folder = $self->directory;
 	my $manifest = $self->manifest;
 
 	my @remote_pages = $self->sa->get_all("Page");
@@ -299,14 +349,14 @@ sub push_pages {
 		push(@pages, $path);
 	}}, "$folder/pages/");
 	for (grep { !exists $present{"$folder/pages/" . $_->handle . ".html"} } @remote_pages) {
-		$self->transfer_progress("delete", "pages", 0, 1, $_->handle);
+		$self->transfer_progress("delete", undef, 0, 1, $_->handle);
 		$self->sa->delete($_);
 	}
 	foreach my $i (0..$#pages) {
 		my $path = $pages[$i];
 		die new WWW::Shopify::Exception("Can't determine handle.") unless $path =~ m/\/?([\w\-]+)\.html$/;
 		my $handle = $1;
-		$self->transfer_progress("push", "pages", $i, int(@pages), $handle);
+		$self->transfer_progress("push", undef, $i, int(@pages), $handle);
 		my $remote_page = first { $_->handle eq $handle } @remote_pages;
 		if ($remote_page) {
 			$remote_page->body_html(scalar(read_file($path)));
@@ -323,6 +373,7 @@ sub push_pages {
 		$manifest->local($path, $remote_page->updated_at);
 		$manifest->remote($path, $remote_page->updated_at);
 	}
+	$self->save_manifest;
 }
 
 =head1 push
@@ -338,8 +389,8 @@ Files that are locally unchanged will only be pushed if the file is missing on t
 =cut
 
 sub push {
-	my ($self, $theme, $folder) = @_;
-	$folder = "." unless defined $folder;
+	my ($self, $theme) = @_;
+	my $folder = $self->directory;
 	my $manifest = $self->manifest();
 	my $truncated = $self->sa->shop_url;
 	$truncated =~ s/\.myshopify.com//;
@@ -383,19 +434,14 @@ sub push {
 					$asset->attachment(encode_base64(scalar(read_file($path, encoding => "binary"))));
 				}
 				$self->transfer_progress("push", $theme, int(@assets) - int(@asset_ids), int(@assets), $asset->key);
-				if ($manifest->exists($_)) {
-					$asset = $self->sa->update($asset);
-				}
-				else {
-					$asset->{parent} = $theme->{id};
-					$asset = $self->sa->create($asset);
-				}
+				$asset = $manifest->exists($path) ? $self->sa->update($asset) : $self->sa->create($asset);
 				$manifest->system($path, DateTime->from_epoch(epoch => stat($path)->mtime));
 				$manifest->local($path, $asset->updated_at);
 				$manifest->remote($path, $asset->updated_at);
 			}
 		#}
 	}
+	$self->save_manifest;
 }
 
 1;

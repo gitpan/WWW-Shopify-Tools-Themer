@@ -39,6 +39,12 @@ shopify-themer.pl action [options]
 
 			pull <ID/Name>
 			Pulls all assets form the specified theme.
+			
+			watch <ID/Name>
+			Watches the specified folder for changes,
+			and then pushes those changes when necessary.
+			If an ID or name is specified, it only
+			watches that folder.
 
 			installGedit
 			Checks for gedit on the system and then
@@ -57,6 +63,8 @@ shopify-themer.pl action [options]
 
 	--wd		Sets the working directory to be something other
 			than .
+	--interval	Sets the interval of time that the 'watch' command
+			checks files at. Default is 1 second.
 
 	This following three parameters only need to be speciefied once
 	per working directory, as it will be saved in a hidden file in
@@ -111,15 +119,17 @@ use JSON qw(encode_json decode_json);
 
 my @ARGS = ();
 
-my $settings = {working => '.'};
+my $settings = {directory => '.'};
+my $interval = 1;
 GetOptions(
 	"url=s" => \$settings->{url},
 	"api_key=s" => \$settings->{apikey},
 	"password=s" => \$settings->{password},
 	"email=s" => \$settings->{email},
-	"wd=s" => \$settings->{working},
+	"wd=s" => \$settings->{directory},
 	"help" => \my $help,
 	"fullhelp" => \my $fullhelp,
+	"interval" => \$interval,
 	'<>' => sub { push(@ARGS, $_[0]->name); }
 );
 
@@ -211,16 +221,14 @@ if ($action eq 'installGedit') {
 	exit(0);
 }
 
-my ($settingFile, $manifestFile) = ($settings->{working} . "/.shopsettings", $settings->{working} . "/.shopmanifest");
+my ($settingFile, $manifestFile) = ($settings->{directory} . "/.shopsettings", $settings->{directory} . "/.shopmanifest");
 my $filesettings = decode_json(read_file($settingFile)) if (-e $settingFile);
 for (keys(%$filesettings)) { $settings->{$_} = $filesettings->{$_} unless defined $settings->{$_}; }
 die "Please specify a --url, --apikey xor --email and --password when using for the first time.\n" unless defined $settings->{url} && defined $settings->{password} && (defined $settings->{apikey} xor defined $settings->{email});
-
-write_file($settingFile, encode_json($settings));
-
+my %saveSettings = map {  $_ => $settings->{$_} } grep { $_ ne "directory" } keys(%$settings);
+write_file($settingFile, encode_json(\%saveSettings));
 
 my $STC = new WWW::Shopify::Tools::Themer($settings);
-$STC->manifest()->load($manifestFile) if -e $manifestFile;
 
 use List::Util qw(first);
 my $interactive = $action eq "interactive";
@@ -231,10 +239,49 @@ my %actions = (
 		print encode_json(int(@themes) > 0 ? \@themes : []) . "\n";
 	},
 	'pullAll' => sub {
-		$STC->pull_all($settings->{working});
+		$STC->pull_all;
 	},
 	'pushAll' => sub {
-		$STC->push_all($settings->{working});
+		$STC->push_all;
+	},
+	'push_pages' => sub {
+		$STC->push_pages;
+	},
+	'pull_pages' => sub {
+		$STC->pull_pages;
+	},
+	'watch' => sub {
+		use File::Find;
+		my $theme = undef;
+		if ($ARGS[1]) {
+			if ($ARGS[1] =~ m/^\d+$/) {
+				$theme = first { $_->{id} eq $ARGS[1] } @{$STC->manifest->{themes}};
+			}
+			else {
+				$theme = first { $_->{name} eq $ARGS[1] } @{$STC->manifest->{themes}}
+			}
+		}
+		die "Unable to find theme " . $ARGS[1] . "\n" unless $theme;
+		print "Entering Check Loop for " . ($theme ? "theme " . $theme->{name} . " (" . $theme->{id} . ") " : "all themes ") . "...\n";
+		my $directory = $theme ? $STC->directory . "/" . $STC->shop_url_truncated . "-" . $theme->{id} : $STC->directory;
+		while (1) {
+			my $should_push = 0;
+			find({ wanted => sub {
+				my ($file) = $_;
+				$should_push = 1 if !$should_push && !-d $file && $file !~ m/\/\.[^\/]+$/ && $STC->manifest->has_local_changes($file);
+			}, no_chdir => 1 }, $directory);
+			if ($should_push) {
+				print "Change detected. Pushing ...\n";
+				if ($theme) {
+					$STC->push(new WWW::Shopify::Model::Theme($theme));
+				}
+				else {
+					$STC->push_all;
+				}
+				print "Done.\n";
+			}
+			sleep($interval);
+		}
 	},
 	'push' => sub {
 		die "Please specify a specific theme to push.\n" unless int(@ARGS) >= 2;
@@ -246,7 +293,7 @@ my %actions = (
 			$theme = first { $_->{name} eq $ARGS[1] } @{$STC->manifest->{themes}}
 		}
 		die "Unable to find theme " . $ARGS[1] . "\n" unless $theme;
-		$STC->push(new WWW::Shopify::Model::Theme($theme), $settings->{working});
+		$STC->push(new WWW::Shopify::Model::Theme($theme));
 	},
 	'pull' => sub {
 		die "Please specify a specific theme to pull.\n" unless int(@ARGS) >= 2;
@@ -258,7 +305,7 @@ my %actions = (
 			$theme = first { $_->{name} eq $ARGS[1] } @{$STC->manifest->{themes}}
 		}
 		die "Unable to find theme " . $ARGS[1] . "\n" unless $theme;
-		$STC->pull(new WWW::Shopify::Model::Theme($theme), $settings->{working});
+		$STC->pull(new WWW::Shopify::Model::Theme($theme));
 	},
 	'exit' => sub { $interactive = undef; }
 );

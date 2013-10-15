@@ -4,7 +4,7 @@
       "Adam Harrison <adamdharrison@gmail.com>"
    ],
    "dynamic_config" : 1,
-   "generated_by" : "Module::Build version 0.4003, CPAN::Meta::Converter version 2.120921",
+   "generated_by" : "Module::Build version 0.4005, CPAN::Meta::Converter version 2.120921",
    "license" : [
       "perl_5"
    ],
@@ -43,7 +43,7 @@
    "provides" : {
       "WWW::Shopify::Tools::Themer" : {
          "file" : "lib/WWW/Shopify/Tools/Themer.pm",
-         "version" : "0.09"
+         "version" : "0.10"
       },
       "WWW::Shopify::Tools::Themer::Manifest" : {
          "file" : "lib/WWW/Shopify/Tools/Themer.pm",
@@ -56,5 +56,5 @@
          "http://dev.perl.org/licenses/"
       ]
    },
-   "version" : "0.09"
+   "version" : "0.10"
 }
