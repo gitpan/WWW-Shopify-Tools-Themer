@@ -40,6 +40,9 @@ shopify-themer.pl action [options]
 			pull <ID/Name>
 			Pulls all assets form the specified theme.
 			
+			activate <ID/Name>
+			Sets the specified theme as the main theme.
+			
 			watch <ID/Name>
 			Watches the specified folder for changes,
 			and then pushes those changes when necessary.
@@ -50,7 +53,7 @@ shopify-themer.pl action [options]
 			Checks for gedit on the system and then
 			installs the appropriate plugin into
 			the gedit configuration folder.
-
+			
 			interactive
 			Causes the script to be interactive; useful if
 			you want to do something non-transactional,
@@ -130,7 +133,7 @@ GetOptions(
 	"help" => \my $help,
 	"fullhelp" => \my $fullhelp,
 	"interval" => \$interval,
-	'<>' => sub { push(@ARGS, $_[0]->name); }
+	'<>' => sub { push(@ARGS, $_[0]); }
 );
 
 my $action = $ARGS[0];
@@ -306,6 +309,18 @@ my %actions = (
 		}
 		die "Unable to find theme " . $ARGS[1] . "\n" unless $theme;
 		$STC->pull(new WWW::Shopify::Model::Theme($theme));
+	},
+	'activate' => sub {
+		die "Please specify a specific theme to pull.\n" unless int(@ARGS) >= 2;
+		my $theme = undef;
+		if ($ARGS[1] =~ m/^\d+$/) {
+			$theme = first { $_->{id} eq $ARGS[1] } @{$STC->manifest->{themes}};
+		}
+		else {
+			$theme = first { $_->{name} eq $ARGS[1] } @{$STC->manifest->{themes}}
+		}
+		die "Unable to find theme " . $ARGS[1] . "\n" unless $theme;
+		$STC->activate(new WWW::Shopify::Model::Theme($theme));
 	},
 	'exit' => sub { $interactive = undef; }
 );

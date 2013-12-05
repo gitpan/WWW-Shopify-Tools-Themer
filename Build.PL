@@ -12,7 +12,6 @@ my $build = Module::Build->new(
 	share_dir => ['assets'],
 	requires => {
 		'LWP::Simple' => 0,
-		'File::Slurp::Unicode' => 0,
 		'File::Path' => 0,
 		'File::Find' => 0,
 		'File::stat' => 0,

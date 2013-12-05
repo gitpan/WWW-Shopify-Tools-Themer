@@ -8,8 +8,8 @@ use WWW::Shopify::Private;
 
 package WWW::Shopify::Tools::Themer::Manifest;
 use JSON;
-use File::Slurp::Unicode;
 use File::stat;
+use File::Slurp;
 use Scalar::Util qw(weaken);
 
 # When we save things down, we translate everything to absolute paths. W
@@ -34,7 +34,7 @@ sub save {
 			'system' => $_[0]->{files}->{$_}->{'system'}->epoch
 		};
 	}
-	$json->{themes} = [map { {name => $_->{name}, id => $_->{id}} } @{$_[0]->{themes}} ];
+	$json->{themes} = [map { {name => $_->{name}, id => $_->{id}, role => $_->{role}} } @{$_[0]->{themes}} ];
 	write_file($_[1], encode_json($json)) or die $!;
 }
 
@@ -86,16 +86,17 @@ sub has_remote_changes($$) {
 package WWW::Shopify::Tools::Themer;
 use File::Basename;
 use LWP::Simple;
-use File::Slurp::Unicode;
 use File::Path qw(make_path);
 use File::Find;
+use File::Slurp;
 use File::stat;
 use JSON;
 use MIME::Base64;
+use utf8;
 #use threads;
 #use threads::shared;
 
-our $VERSION = '0.10';
+our $VERSION = '0.11';
 
 =head1 WWW::Shopify::Tools::Themer
 
@@ -194,7 +195,7 @@ get_themes returns an array of all the themes present in the shop, with the acti
 sub get_themes {
 	my ($self) = @_;
 	my @themes = $self->sa()->get_all('Theme');
-	$self->manifest->{themes} = [map { { name => $_->name, id => $_->id } } @themes];
+	$self->manifest->{themes} = [map { { name => $_->name, id => $_->id, role => $_->role } } @themes];
 	return @{$self->manifest->{themes}};
 }
 
@@ -235,7 +236,7 @@ sub pull_pages {
 		$manifest->remote($path, $page->updated_at);
 		next if !$manifest->has_remote_changes($path);
 		$manifest->local($path, $page->updated_at);
-		write_file($path, $page->body_html) or die $!;
+		write_file($path, { binmode => "utf8" }, $page->body_html) or die $!;
 		$manifest->system($path, DateTime->from_epoch(epoch => stat($path)->mtime));
 	}
 	$self->save_manifest;
@@ -290,13 +291,13 @@ sub pull {
 				if (defined $asset->public_url()) {
 					my $value = get($asset->public_url());
 					$value = '' unless $value;
-					write_file($path, $value) or die $!;
+					write_file($path, {binmode => 'raw'}, $value) or die $!;
 				} else {
 					# Assets which don't have a public url, we have to get individually.
 					my $full_asset = $self->sa()->get('Asset', $asset->key(), {parent => $theme});
 					my $value = $full_asset->value();
 					$value = '' unless $value;
-					write_file($path, {binmode => ':raw'}, $value);
+					write_file($path, {binmode => 'utf8'}, $value);
 				}
 				$manifest->system($path, DateTime->from_epoch(epoch => stat($path)->mtime));
 			}
@@ -359,12 +360,12 @@ sub push_pages {
 		$self->transfer_progress("push", undef, $i, int(@pages), $handle);
 		my $remote_page = first { $_->handle eq $handle } @remote_pages;
 		if ($remote_page) {
-			$remote_page->body_html(scalar(read_file($path)));
+			$remote_page->body_html(scalar(read_file($path, binmode => "utf8")));
 			$remote_page = $self->sa->update($remote_page);
 		}
 		else {
 			$remote_page = $self->sa->create(new WWW::Shopify::Model::Page({ 
-				body_html => scalar(read_file($path)),
+				body_html => scalar(read_file($path, binmode => "utf8")),
 				handle => $handle,
 				title => join(" ", map { ucfirst($_) } split(/-/, $handle)) 
 			}));
@@ -428,10 +429,10 @@ sub push {
 				my $asset_extension = $2;
 				my $asset = new WWW::Shopify::Model::Asset({key => $asset_key, associated_parent => $theme});
 				if ($asset_extension eq "liquid" || $asset_extension eq "json" || $asset_extension eq "js" || $asset_extension eq "css") {
-					$asset->value(scalar(read_file($path)));
+					$asset->value(scalar(read_file($path, binmode => ":utf8")));
 				}
 				else {
-					$asset->attachment(encode_base64(scalar(read_file($path, encoding => "binary"))));
+					$asset->attachment(encode_base64(scalar(read_file($path, binmode => "raw"))));
 				}
 				$self->transfer_progress("push", $theme, int(@assets) - int(@asset_ids), int(@assets), $asset->key);
 				$asset = $manifest->exists($path) ? $self->sa->update($asset) : $self->sa->create($asset);
@@ -442,6 +443,23 @@ sub push {
 		#}
 	}
 	$self->save_manifest;
+}
+
+=head1 activate
+
+Sets the sepecified theme as the main shopify theme.
+
+=cut
+
+sub activate {
+	my ($self, $theme) = @_;
+	$theme->role('main');
+	$theme = $self->sa->update($theme);
+	my $manifest = first { $_->{role} eq "main" } @{$self->manifest->{themes}};
+	$manifest->{role} = "unpublished";
+	$manifest = first { $_->{id} == $theme->id } @{$self->manifest->{themes}};
+	$manifest->{role} = $theme->role;
+	$manifest->{name} = $theme->name;
 }
 
 1;
